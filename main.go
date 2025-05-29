@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,145 +14,99 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/wylyK/todo-app-chi/api"
+	"github.com/wylyK/todo-app-chi/todo"
 	_ "modernc.org/sqlite"
 )
 
-func getNotesFromDB(db *sql.DB) ([]api.Note, error) {
-	notes := []api.Note{}
-	cmd := "SELECT id, title, content FROM notes"
-	entry, err := db.Query(cmd)
+type queriesWrapper struct {
+	queries *todo.Queries
+}
+
+func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request) {
+	notes, err := q.queries.GetNotesFromDB(context.TODO())
 	if err != nil {
-		return notes, err
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	for entry.Next() {
-		var currNote api.Note
-		err = entry.Scan(&currNote.Id, &currNote.Title, &currNote.Content)
-		if err != nil {
-			return notes, err
-		}
-
-		notes = append(notes, currNote)
-	}
-
-	return notes, nil
-}
-
-func getNoteByIdFromDB(db *sql.DB, id string) (api.Note, error) {
-	var note api.Note
-	cmd := "SELECT id, title, content FROM notes WHERE id=?"
-	entry := db.QueryRow(cmd, id)
-
-	err := entry.Scan(&note.Id, &note.Title, &note.Content)
+	b, err := json.Marshal(notes)
 	if err != nil {
-		return note, err
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	return note, nil
-}
-
-func postNoteToDB(db *sql.DB, noteRequest api.NoteRequest) (uuid.UUID, error) {
-	var noteId uuid.UUID
-	cmd := "INSERT INTO notes (id, title, content) VALUES(?, ?, ?) RETURNING id"
-	newKey, err := uuid.NewRandom()
+	_, err = w.Write(b)
 	if err != nil {
-		return noteId, err
+		log.Println("Cannot write to response writer: " + err.Error())
+		return
 	}
+}
 
-	entry := db.QueryRow(cmd, newKey, noteRequest.Title, noteRequest.Content)
-	err = entry.Scan(&noteId)
+func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := []byte(chi.URLParam(r, "id"))
+	note, err := q.queries.GetNoteByIdFromDB(context.TODO(), id)
 	if err != nil {
-		return noteId, err
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	return noteId, nil
-}
+	b, err := json.Marshal(note)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-func getNotesEndpoint(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		notes, err := getNotesFromDB(db)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		b, err := json.Marshal(notes)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		_, err = w.Write(b)
-		if err != nil {
-			log.Print("Cannot write to response writer: " + err.Error())
-			return
-		}
+	_, err = w.Write(b)
+	if err != nil {
+		log.Println("Cannot write to response writer: " + err.Error())
+		return
 	}
 }
 
-func getNotesByIdEndpoint(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := chi.URLParam(r, "id")
-		note, err := getNoteByIdFromDB(db, id)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, err.Error(), http.StatusNotFound)
-				return
-			}
+func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Request) {
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+	var noteRequest todo.PostNoteToDBParams
+	err = json.Unmarshal(b, &noteRequest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintf(os.Stdout, "%+v, %+v\n", noteRequest.Title, noteRequest.Content)
 
-		b, err := json.Marshal(note)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	newId, err := uuid.NewRandom()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	noteRequest.ID = []byte(newId.String())
 
-		_, err = w.Write(b)
-		if err != nil {
-			log.Print("Cannot write to response writer: " + err.Error())
-			return
-		}
+	noteId, err := q.queries.PostNoteToDB(context.TODO(), noteRequest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	_, err = w.Write(noteId)
+	if err != nil {
+		log.Println("Cannot write to response writer: " + err.Error())
 	}
 }
 
-func postNotesEndpoint(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var noteRequest api.NoteRequest
-
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if err = json.Unmarshal(b, &noteRequest); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(os.Stdout, "%+v", noteRequest)
-
-		noteId, err := postNoteToDB(db, noteRequest)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		_, err = w.Write([]byte(noteId.String()))
-		if err != nil {
-			log.Print("Cannot write to response writer: " + err.Error())
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-	}
-}
+//go:embed schema.sql
+var cmd string
 
 func main() {
-	r := chi.NewRouter()
-
 	db, err := sql.Open("sqlite", "database.sqlite")
 	if err != nil {
 		log.Fatal("failed to open file: " + err.Error())
@@ -162,20 +118,17 @@ func main() {
 	}
 	fmt.Println("Connected!")
 
-	cmd := `CREATE TABLE IF NOT EXISTS notes (
-    id blob,
-    title text,
-	content text
-	);`
-
 	_, err = db.Exec(cmd)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	r.Get("/notes", getNotesEndpoint(db))
-	r.Get("/notes/{id}", getNotesByIdEndpoint(db))
-	r.Post("/notes", postNotesEndpoint(db))
+	q := &queriesWrapper{queries: todo.New(db)}
+
+	r := chi.NewRouter()
+	r.Get("/notes", q.getNotesEndpoint)
+	r.Get("/notes/{id}", q.getNotesByIdEndpoint)
+	r.Post("/notes", q.postNotesEndpoint)
 
 	err = http.ListenAndServe(":8080", r)
 	if err != nil {
