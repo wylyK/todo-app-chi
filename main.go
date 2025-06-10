@@ -14,8 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 	"github.com/wylyK/todo-app-chi/todo"
-	_ "modernc.org/sqlite"
 )
 
 type queriesWrapper struct {
@@ -43,7 +43,12 @@ func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request)
 }
 
 func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Request) {
-	id := []byte(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	note, err := q.queries.GetNoteByIdFromDB(context.TODO(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -88,8 +93,7 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	noteRequest.ID = []byte(newId.String())
-
+	noteRequest.ID = newId
 	noteId, err := q.queries.PostNoteToDB(context.TODO(), noteRequest)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -97,7 +101,13 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	_, err = w.Write(noteId)
+	id_b, err := json.Marshal(noteId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = w.Write(id_b)
 	if err != nil {
 		log.Println("Cannot write to response writer: " + err.Error())
 	}
@@ -107,7 +117,7 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 var cmd string
 
 func main() {
-	db, err := sql.Open("sqlite", "database.sqlite")
+	db, err := sql.Open("postgres", "database.postgres=")
 	if err != nil {
 		log.Fatal("failed to open file: " + err.Error())
 	}
@@ -129,7 +139,6 @@ func main() {
 	r.Get("/notes", q.getNotesEndpoint)
 	r.Get("/notes/{id}", q.getNotesByIdEndpoint)
 	r.Post("/notes", q.postNotesEndpoint)
-
 	err = http.ListenAndServe(":8080", r)
 	if err != nil {
 		log.Fatal(err)

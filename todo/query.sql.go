@@ -7,14 +7,16 @@ package todo
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const getNoteByIdFromDB = `-- name: GetNoteByIdFromDB :one
 SELECT id, title, content FROM notes
-WHERE id = ?
+WHERE id = $1 LIMIT 1
 `
 
-func (q *Queries) GetNoteByIdFromDB(ctx context.Context, id []byte) (Note, error) {
+func (q *Queries) GetNoteByIdFromDB(ctx context.Context, id uuid.UUID) (Note, error) {
 	row := q.db.QueryRowContext(ctx, getNoteByIdFromDB, id)
 	var i Note
 	err := row.Scan(&i.ID, &i.Title, &i.Content)
@@ -52,19 +54,19 @@ const postNoteToDB = `-- name: PostNoteToDB :one
 INSERT INTO notes (
     id, title, content
 ) VALUES (
-    ?, ?, ?
+    $1, $2, $3
 ) RETURNING id
 `
 
 type PostNoteToDBParams struct {
-	ID      []byte
+	ID      uuid.UUID
 	Title   string
 	Content string
 }
 
-func (q *Queries) PostNoteToDB(ctx context.Context, arg PostNoteToDBParams) ([]byte, error) {
+func (q *Queries) PostNoteToDB(ctx context.Context, arg PostNoteToDBParams) (uuid.UUID, error) {
 	row := q.db.QueryRowContext(ctx, postNoteToDB, arg.ID, arg.Title, arg.Content)
-	var id []byte
+	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
 }

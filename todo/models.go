@@ -4,8 +4,12 @@
 
 package todo
 
+import (
+	"github.com/google/uuid"
+)
+
 type Note struct {
-	ID      []byte
+	ID      uuid.UUID
 	Title   string
 	Content string
 }
