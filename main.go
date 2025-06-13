@@ -11,10 +11,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/wylyK/todo-app-chi/todo"
 )
 
@@ -23,8 +24,20 @@ type queriesWrapper struct {
 }
 
 func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request) {
-	notes, err := q.queries.GetNotesFromDB(context.TODO())
+	ctx := r.Context()
+	select {
+	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
+		log.Println("Request Cancelled")
+		return
+	}
+
+	notes, err := q.queries.GetNotesFromDB(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Println("Query Cancelled")
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -38,7 +51,6 @@ func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request)
 	_, err = w.Write(b)
 	if err != nil {
 		log.Println("Cannot write to response writer: " + err.Error())
-		return
 	}
 }
 
@@ -49,14 +61,24 @@ func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	note, err := q.queries.GetNoteByIdFromDB(context.TODO(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
+	ctx := r.Context()
+	select {
+	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
+		log.Println("Request Cancelled")
+		return
+	}
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	note, err := q.queries.GetNoteByIdFromDB(ctx, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+			log.Println("Query Cancelled")
+		case errors.Is(err, sql.ErrNoRows):
+			http.Error(w, err.Error(), http.StatusNotFound)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -69,7 +91,6 @@ func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Req
 	_, err = w.Write(b)
 	if err != nil {
 		log.Println("Cannot write to response writer: " + err.Error())
-		return
 	}
 }
 
@@ -77,6 +98,14 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	select {
+	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
+		log.Println("Request Cancelled")
 		return
 	}
 
@@ -94,8 +123,12 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	noteRequest.ID = newId
-	noteId, err := q.queries.PostNoteToDB(context.TODO(), noteRequest)
+	noteId, err := q.queries.PostNoteToDB(ctx, noteRequest)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Println("Query Cancelled")
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -117,7 +150,7 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 var cmd string
 
 func main() {
-	db, err := sql.Open("postgres", "database.postgres=")
+	db, err := sql.Open("pgx", "postgres://willy:2015@localhost:5432/database.postgres?sslmode=disable")
 	if err != nil {
 		log.Fatal("failed to open file: " + err.Error())
 	}
