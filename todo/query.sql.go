@@ -12,23 +12,30 @@ import (
 )
 
 const getNoteByIdFromDB = `-- name: GetNoteByIdFromDB :one
-SELECT id, title, content FROM notes
+SELECT id, title, content, created_at FROM notes
 WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetNoteByIdFromDB(ctx context.Context, id uuid.UUID) (Note, error) {
 	row := q.db.QueryRowContext(ctx, getNoteByIdFromDB, id)
 	var i Note
-	err := row.Scan(&i.ID, &i.Title, &i.Content)
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Content,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
 const getNotesFromDB = `-- name: GetNotesFromDB :many
-SELECT id, title, content FROM notes
+SELECT id, title, content, created_at FROM notes
+ORDER BY created_at DESC
+LIMIT 5 OFFSET $1
 `
 
-func (q *Queries) GetNotesFromDB(ctx context.Context) ([]Note, error) {
-	rows, err := q.db.QueryContext(ctx, getNotesFromDB)
+func (q *Queries) GetNotesFromDB(ctx context.Context, offset int32) ([]Note, error) {
+	rows, err := q.db.QueryContext(ctx, getNotesFromDB, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +43,12 @@ func (q *Queries) GetNotesFromDB(ctx context.Context) ([]Note, error) {
 	var items []Note
 	for rows.Next() {
 		var i Note
-		if err := rows.Scan(&i.ID, &i.Title, &i.Content); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Content,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

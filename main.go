@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,16 +27,26 @@ type queriesWrapper struct {
 func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 	case <-ctx.Done():
-		log.Println("Request Cancelled")
+		log.Println("Request cancelled")
 		return
 	}
 
-	notes, err := q.queries.GetNotesFromDB(ctx)
+	params := r.URL.Query()["page"]
+	if len(params) != 1 {
+		http.Error(w, "Must specify a single page number", http.StatusBadRequest)
+	}
+
+	offset, err := strconv.ParseInt(params[0], 10, 32)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+
+	notes, err := q.queries.GetNotesFromDB(ctx, int32(offset))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			log.Println("Query Cancelled")
+			log.Println("Query cancelled")
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -55,17 +66,17 @@ func (q queriesWrapper) getNotesEndpoint(w http.ResponseWriter, r *http.Request)
 }
 
 func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	ctx := r.Context()
+	select {
+	case <-time.After(3 * time.Second):
+	case <-ctx.Done():
+		log.Println("Request cancelled")
 		return
 	}
 
-	ctx := r.Context()
-	select {
-	case <-time.After(5 * time.Second):
-	case <-ctx.Done():
-		log.Println("Request Cancelled")
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -73,7 +84,7 @@ func (q *queriesWrapper) getNotesByIdEndpoint(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		switch {
 		case errors.Is(err, context.Canceled):
-			log.Println("Query Cancelled")
+			log.Println("Query cancelled")
 		case errors.Is(err, sql.ErrNoRows):
 			http.Error(w, err.Error(), http.StatusNotFound)
 		default:
@@ -103,9 +114,9 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 
 	ctx := r.Context()
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 	case <-ctx.Done():
-		log.Println("Request Cancelled")
+		log.Println("Request cancelled")
 		return
 	}
 
@@ -126,7 +137,7 @@ func (q *queriesWrapper) postNotesEndpoint(w http.ResponseWriter, r *http.Reques
 	noteId, err := q.queries.PostNoteToDB(ctx, noteRequest)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			log.Println("Query Cancelled")
+			log.Println("Query cancelled")
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
